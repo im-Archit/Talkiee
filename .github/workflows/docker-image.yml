@@ -42,7 +42,7 @@ jobs:
       run: trivy image my-image-name:${{ github.sha }}
 
     - name: Install Snyk
-      uses: snyk/actions/setup@v2
+      uses: snyk/actions/setup@master
       with:
         version: 'v1.733.0' # You can specify the version you need
 
