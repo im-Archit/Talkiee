@@ -7,12 +7,65 @@ on:
     branches: [ "main" ]
 
 jobs:
-
   build:
-
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v2
+
+    - name: Cache Docker layers
+      uses: actions/cache@v3
+      with:
+        path: /tmp/.buildx-cache
+        key: ${{ runner.os }}-buildx-${{ github.sha }}
+        restore-keys: |
+          ${{ runner.os }}-buildx-
+
     - name: Build the Docker image
-      run: docker build . --file Dockerfile --tag my-image-name:$(date +%s)
+      id: docker_build
+      run: docker build . --file Dockerfile --tag my-image-name:${{ github.sha }}
+
+    - name: Install Trivy
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y wget apt-transport-https gnupg lsb-release
+        wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
+        echo deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main | sudo tee -a /etc/apt/sources.list.d/trivy.list
+        sudo apt-get update
+        sudo apt-get install -y trivy
+
+    - name: Scan Docker image with Trivy
+      run: trivy image my-image-name:${{ github.sha }}
+
+    - name: Install Snyk
+      uses: snyk/actions/setup@v2
+      with:
+        version: 'v1.733.0' # You can specify the version you need
+
+    - name: Scan Docker image with Snyk
+      env:
+        SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+      run: snyk container test my-image-name:${{ github.sha }} --file=Dockerfile --severity-threshold=high
+
+    - name: Install Anchore CLI
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y python3-pip
+        pip3 install anchorecli
+
+    - name: Scan Docker image with Anchore
+      env:
+        ANCHORE_CLI_USER: admin
+        ANCHORE_CLI_PASS: foobar
+        ANCHORE_CLI_URL: http://localhost:8228/v1
+      run: |
+        docker run -d -p 8228:8228 --name anchore-engine anchore/engine:latest
+        sleep 30
+        anchore-cli system wait
+        anchore-cli image add my-image-name:${{ github.sha }}
+        anchore-cli image wait my-image-name:${{ github.sha }}
+        anchore-cli image vuln my-image-name:${{ github.sha }} all
